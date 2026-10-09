@@ -78,8 +78,13 @@
     <div class="card">
       <label for="loginName">Personalnummer</label>
       <input id="loginName" inputmode="numeric" autocomplete="username" autocapitalize="characters" placeholder="z. B. 1001">
+      <div id="resetBox" class="hidden">
+        <p style="margin:12px 0 0;font-size:.9rem;color:var(--muted)">Passwort vergessen: Bitte den Admin-Code vom Büro eingeben und ein neues Passwort wählen. Ihre Einträge bleiben erhalten.</p>
+        <label for="adminCode">Admin-Code</label>
+        <input id="adminCode" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      </div>
       <div id="pinNeu" class="hidden">
-        <p style="margin:12px 0 0;font-size:.9rem;color:var(--muted)">Erste Anmeldung auf diesem Gerät: Bitte wählen Sie ein Passwort mit mindestens 12 Zeichen.</p>
+        <p id="pinNeuText" style="margin:12px 0 0;font-size:.9rem;color:var(--muted)">Erste Anmeldung auf diesem Gerät: Bitte wählen Sie ein Passwort mit mindestens 12 Zeichen.</p>
         <label for="pin1">Neues Passwort</label>
         <input id="pin1" type="password" minlength="12" autocomplete="new-password">
         <label for="pin2">Passwort wiederholen</label>
@@ -92,6 +97,7 @@
       </div>
       <div class="err" id="loginErr"></div>
       <button class="primary" id="loginBtn" style="width:100%;margin-top:8px">Anmelden</button>
+      <button class="link" id="vergessen" style="width:100%;margin-top:4px">Passwort vergessen?</button>
     </div>
   </section>
 
@@ -156,6 +162,8 @@
 const FIRMA = "Reinigung";                       // erscheint im Titel und in der Excel-Datei
 const EMPFAENGER = "";                           // z. B. "buero@firma.li" – für den Mail-Versand
 const PERSONALNUMMERN = ["1001", "1002", "1003"];  // keine Namen – aus Datenschutzgründen nur Nummern
+// Prüfsumme des Admin-Codes zum Zurücksetzen vergessener Passwörter (der Code selbst steht in ADMIN-CODE.txt, nicht auf GitHub)
+const ADMIN = { salz: "96bad09732ee9e0fca5b461324098162", hash: "3b863d21062c595cefe2092280f4920e5b3b5ea2ea37750a99ab99dcfdbe4529" };
 /* ========================================= */
 
 const TYPEN = [
@@ -223,13 +231,22 @@ $("firmaTitel").textContent = FIRMA + " – Stundenerfassung";
 try { const letzter = localStorage.getItem(KEY + "_name"); if (letzter && PERSONALNUMMERN.includes(letzter)) $("loginName").value = letzter; } catch {}
 
 const nummer = () => $("loginName").value.trim().toUpperCase();
+let reset = false;
 function loginModus() {
-  const neu = PERSONALNUMMERN.includes(nummer()) && !db.users[nummer()]?.pin;
+  const bekannt = PERSONALNUMMERN.includes(nummer()), hatPw = !!db.users[nummer()]?.pin;
+  if (!hatPw) reset = false;
+  const neu = (bekannt && !hatPw) || reset;
   $("pinNeu").classList.toggle("hidden", !neu);
   $("pinAlt").classList.toggle("hidden", neu);
+  $("resetBox").classList.toggle("hidden", !reset);
+  $("vergessen").classList.toggle("hidden", !bekannt || !hatPw);
+  $("vergessen").textContent = reset ? "Zurück zur Anmeldung" : "Passwort vergessen?";
+  $("pinNeuText").classList.toggle("hidden", reset);
+  $("loginBtn").textContent = reset ? "Neues Passwort speichern" : "Anmelden";
   $("loginErr").textContent = "";
 }
-$("loginName").oninput = loginModus;
+$("loginName").oninput = () => { reset = false; loginModus(); };
+$("vergessen").onclick = () => { reset = !reset; loginModus(); if (reset) $("adminCode").focus(); };
 loginModus();
 
 $("zeigen").onchange = e => ["pin1", "pin2"].forEach(id => $(id).type = e.target.checked ? "text" : "password");
@@ -239,7 +256,9 @@ $("loginBtn").onclick = async () => {
   const name = nummer();
   if (!PERSONALNUMMERN.includes(name)) return $("loginErr").textContent = "Diese Personalnummer ist nicht bekannt.";
   const u = db.users[name];
-  if (!u?.pin) {
+  if (reset && await hash($("adminCode").value.toUpperCase().replace(/[\s-]/g, ""), ADMIN.salz) !== ADMIN.hash)
+    return $("loginErr").textContent = "Der Admin-Code ist falsch.";
+  if (!u?.pin || reset) {
     const p1 = $("pin1").value, p2 = $("pin2").value;
     if (p1.length < MIN_LAENGE) return $("loginErr").textContent = `Das Passwort muss mindestens ${MIN_LAENGE} Zeichen haben (jetzt ${p1.length}).`;
     if (p1 !== p2) return $("loginErr").textContent = "Die Passwörter stimmen nicht überein.";
@@ -256,7 +275,8 @@ $("loginBtn").onclick = async () => {
 function anmelden(name) {
   user = name;
   try { localStorage.setItem(KEY + "_name", name); sessionStorage.setItem(KEY + "_sitzung", name); } catch {}
-  ["pin", "pin1", "pin2"].forEach(id => $(id).value = "");
+  ["pin", "pin1", "pin2", "adminCode"].forEach(id => $(id).value = "");
+  reset = false;
   const d = new Date(); jahr = d.getFullYear(); monat = d.getMonth();
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");

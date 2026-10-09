@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<title>Stundenerfassung</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f6f5; --card: #fff; --text: #1c2524; --muted: #64706e; --line: #e2e7e5;
+    --accent: #0f766e; --accent-soft: #e6f4f2; --danger: #b42318;
+    --arbeit: #0f766e; --ferien: #d97706; --krank: #c2410c; --unfall: #b42318; --feiertag: #6d28d9; --feiertag-soft: #efe9fb; --andere: #475569;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111615; --card: #1b2221; --text: #e8eeec; --muted: #9aa6a3; --line: #2c3533; --accent: #2dd4bf; --accent-soft: #163330; --feiertag: #c4b5fd; --feiertag-soft: #2a2340; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px 16px 110px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 12px 0 4px; }
+  input, select, textarea { width: 100%; font: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
+  textarea { min-height: 60px; resize: vertical; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 12px 16px; cursor: pointer; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  button.primary { background: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #062420; } }
+  button.danger { background: transparent; color: var(--danger); padding: 8px; }
+  button.link { background: none; color: var(--muted); padding: 8px; font-weight: 500; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  .hidden { display: none !important; }
+  .err { color: var(--danger); font-size: .9rem; min-height: 1.2em; margin-top: 8px; }
+
+  .top { display: flex; justify-content: space-between; align-items: center; }
+  .monat { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 12px; }
+  .monat strong { font-size: 1.15rem; }
+  .monat button { width: 44px; height: 44px; padding: 0; font-size: 1.2rem; }
+
+  .summe { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .summe div { background: var(--bg); border-radius: 10px; padding: 8px 10px; }
+  .summe b { display: block; font-size: 1.15rem; }
+  .summe span { font-size: .78rem; color: var(--muted); }
+
+  .tag { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; cursor: pointer; }
+  .tag.we { opacity: .65; }
+  .tag.heute { border-color: var(--accent); }
+  .tag .datum { width: 44px; text-align: center; flex: none; }
+  .tag .datum b { display: block; font-size: 1.2rem; }
+  .tag .datum span { font-size: .75rem; color: var(--muted); }
+  .tag .inhalt { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag .ft { font-size: .8rem; padding: 3px 8px; border-radius: 99px; background: var(--feiertag-soft); color: var(--feiertag); font-weight: 600; }
+  .tag .leer { color: var(--muted); font-size: .9rem; }
+  .pill { font-size: .8rem; padding: 3px 8px; border-radius: 99px; color: #fff; }
+
+  .unten { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--card); border-top: 1px solid var(--line); }
+  .unten button { width: 100%; max-width: 608px; display: block; margin: 0 auto; padding: 14px; }
+
+  dialog { border: 0; border-radius: 16px; padding: 0; width: min(560px, calc(100vw - 24px)); background: var(--card); color: var(--text); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog .kopf { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  dialog .body { padding: 4px 16px 16px; max-height: 75vh; overflow: auto; }
+  .eintrag { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .eintrag div { flex: 1; }
+  .eintrag small { color: var(--muted); display: block; }
+  .typen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .typen button { padding: 10px 4px; font-size: .85rem; background: var(--bg); color: var(--text); border: 2px solid transparent; }
+  .typen button.aktiv { border-color: var(--accent); background: var(--accent-soft); }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- Anmeldung -->
+  <section id="login">
+    <h1 id="firmaTitel">Stundenerfassung</h1>
+    <div class="card">
+      <label for="loginName">Personalnummer</label>
+      <input id="loginName" inputmode="numeric" autocomplete="username" autocapitalize="characters" placeholder="z. B. 1001">
+      <div id="pinNeu" class="hidden">
+        <p style="margin:12px 0 0;font-size:.9rem;color:var(--muted)">Erste Anmeldung auf diesem Gerät: Bitte wählen Sie ein Passwort mit mindestens 12 Zeichen.</p>
+        <label for="pin1">Neues Passwort</label>
+        <input id="pin1" type="password" minlength="12" autocomplete="new-password">
+        <label for="pin2">Passwort wiederholen</label>
+        <input id="pin2" type="password" minlength="12" autocomplete="new-password">
+        <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="zeigen" style="width:auto"> Passwort anzeigen</label>
+      </div>
+      <div id="pinAlt">
+        <label for="pin">Passwort</label>
+        <input id="pin" type="password" autocomplete="current-password">
+      </div>
+      <div class="err" id="loginErr"></div>
+      <button class="primary" id="loginBtn" style="width:100%;margin-top:8px">Anmelden</button>
+    </div>
+  </section>
+
+  <!-- Monatsansicht -->
+  <section id="app" class="hidden">
+    <div class="top">
+      <h1 id="hallo" style="margin:8px 0"></h1>
+      <button class="link" id="logout">Abmelden</button>
+    </div>
+    <div class="monat">
+      <button id="prev" aria-label="Vorheriger Monat">‹</button>
+      <strong id="monatTitel"></strong>
+      <button id="next" aria-label="Nächster Monat">›</button>
+    </div>
+    <div class="card summe" id="summe"></div>
+    <div id="tage"></div>
+  </section>
+</main>
+
+<div class="unten hidden" id="untenBar">
+  <button class="primary" id="senden">Monat als Excel senden</button>
+</div>
+
+<!-- Tag bearbeiten -->
+<dialog id="dlg">
+  <div class="kopf">
+    <strong id="dlgTitel"></strong>
+    <button class="link" id="dlgZu" aria-label="Schliessen">✕</button>
+  </div>
+  <div class="body">
+    <div id="dlgListe"></div>
+    <label>Art</label>
+    <div class="typen" id="typen"></div>
+
+    <div id="fArbeit">
+      <label for="std">Gearbeitete Stunden</label>
+      <input id="std" type="number" inputmode="decimal" min="0" step="0.25" placeholder="z. B. 3.5">
+    </div>
+
+    <div id="fAbwesend" class="hidden">
+      <label for="umfang">Umfang</label>
+      <select id="umfang">
+        <option value="1">Ganzer Tag</option>
+        <option value="0.5">Halber Tag</option>
+        <option value="std">Stunden</option>
+      </select>
+      <div id="fAbwStd" class="hidden">
+        <label for="abwStd">Stunden</label>
+        <input id="abwStd" type="number" inputmode="decimal" min="0" step="0.25">
+      </div>
+    </div>
+
+    <label for="notiz">Bemerkung (optional)</label>
+    <textarea id="notiz"></textarea>
+    <div class="err" id="dlgErr"></div>
+    <button class="primary" id="speichern" style="width:100%;margin-top:8px">Eintrag hinzufügen</button>
+  </div>
+</dialog>
+
+<script>
+/* ===== EINSTELLUNGEN – hier anpassen ===== */
+const FIRMA = "Reinigung";                       // erscheint im Titel und in der Excel-Datei
+const EMPFAENGER = "";                           // z. B. "buero@firma.li" – für den Mail-Versand
+const PERSONALNUMMERN = ["1001", "1002", "1003"];  // keine Namen – aus Datenschutzgründen nur Nummern
+/* ========================================= */
+
+const TYPEN = [
+  { id: "arbeit",   label: "Arbeit",    farbe: "var(--arbeit)" },
+  { id: "ferien",   label: "Ferien",    farbe: "var(--ferien)" },
+  { id: "krank",    label: "Krankheit", farbe: "var(--krank)" },
+  { id: "unfall",   label: "Unfall",    farbe: "var(--unfall)" },
+  { id: "andere",   label: "Andere",    farbe: "var(--andere)" },
+];
+const TYP = Object.fromEntries(TYPEN.map(t => [t.id, t]));
+const WT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+const WT_LANG = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
+const MONATE = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+/* --- Bankfeiertage Liechtenstein --- */
+function ostern(j) {  // Gauss'sche Osterformel (gregorianisch)
+  const a = j % 19, b = Math.floor(j / 100), c = j % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mon = Math.floor((h + l - 7 * m + 114) / 31), tag = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(j, mon - 1, tag);
+}
+const feiertagCache = {};
+function feiertage(j) {
+  if (feiertagCache[j]) return feiertagCache[j];
+  const f = {}, o = ostern(j);
+  const fest = (m, t, name) => f[iso(j, m - 1, t)] = name;
+  const beweglich = (tage, name) => { const d = new Date(o); d.setDate(d.getDate() + tage); f[iso(d.getFullYear(), d.getMonth(), d.getDate())] = name; };
+  fest(1, 1, "Neujahr"); fest(1, 2, "Berchtoldstag"); fest(1, 6, "Heilige Drei Könige"); fest(2, 2, "Mariä Lichtmess");
+  beweglich(-47, "Fasnachtsdienstag"); fest(3, 19, "Josefstag");
+  beweglich(-2, "Karfreitag"); beweglich(0, "Ostersonntag"); beweglich(1, "Ostermontag"); fest(5, 1, "Tag der Arbeit");
+  beweglich(39, "Auffahrt"); beweglich(49, "Pfingstsonntag"); beweglich(50, "Pfingstmontag"); beweglich(60, "Fronleichnam");
+  fest(8, 15, "Staatsfeiertag"); fest(9, 8, "Mariä Geburt"); fest(11, 1, "Allerheiligen"); fest(12, 8, "Mariä Empfängnis");
+  fest(12, 24, "Heiligabend"); fest(12, 25, "Weihnachten"); fest(12, 26, "Stephanstag"); fest(12, 31, "Silvester");
+  return feiertagCache[j] = f;
+}
+function feiertag(k) { return feiertage(Number(k.slice(0, 4)))[k] || ""; }
+
+const KEY = "stundenerfassung_v1";
+const $ = id => document.getElementById(id);
+
+/* --- Speicher (nur auf diesem Gerät) --- */
+function laden() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || { users: {} }; } catch { return { users: {} }; }
+}
+function sichern() {
+  try { localStorage.setItem(KEY, JSON.stringify(db)); } catch { alert("Speichern nicht möglich (privater Modus?)."); }
+}
+let db = laden();
+let user = null;
+let jahr, monat;          // monat: 0–11
+let aktTag = null, aktTyp = "arbeit";
+
+// Das Passwort wird nie im Klartext gespeichert, nur als PBKDF2-Hash mit zufälligem Salz.
+const MIN_LAENGE = 12;
+const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+async function hash(passwort, salz) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(passwort), "PBKDF2", false, ["deriveBits"]);
+  return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", salt: enc.encode(salz), iterations: 200000, hash: "SHA-256" }, key, 256));
+}
+
+/* --- Anmeldung --- */
+$("firmaTitel").textContent = FIRMA + " – Stundenerfassung";
+try { const letzter = localStorage.getItem(KEY + "_name"); if (letzter && PERSONALNUMMERN.includes(letzter)) $("loginName").value = letzter; } catch {}
+
+const nummer = () => $("loginName").value.trim().toUpperCase();
+function loginModus() {
+  const neu = PERSONALNUMMERN.includes(nummer()) && !db.users[nummer()]?.pin;
+  $("pinNeu").classList.toggle("hidden", !neu);
+  $("pinAlt").classList.toggle("hidden", neu);
+  $("loginErr").textContent = "";
+}
+$("loginName").oninput = loginModus;
+loginModus();
+
+$("zeigen").onchange = e => ["pin1", "pin2"].forEach(id => $(id).type = e.target.checked ? "text" : "password");
+
+$("loginBtn").onclick = async () => {
+  if (!window.crypto?.subtle) return $("loginErr").textContent = "Bitte die Seite über https:// öffnen.";
+  const name = nummer();
+  if (!PERSONALNUMMERN.includes(name)) return $("loginErr").textContent = "Diese Personalnummer ist nicht bekannt.";
+  const u = db.users[name];
+  if (!u?.pin) {
+    const p1 = $("pin1").value, p2 = $("pin2").value;
+    if (p1.length < MIN_LAENGE) return $("loginErr").textContent = `Das Passwort muss mindestens ${MIN_LAENGE} Zeichen haben (jetzt ${p1.length}).`;
+    if (p1 !== p2) return $("loginErr").textContent = "Die Passwörter stimmen nicht überein.";
+    const salz = hex(crypto.getRandomValues(new Uint8Array(16)));
+    db.users[name] = { salz, pin: await hash(p1, salz), eintraege: u?.eintraege || {} };
+    sichern();
+  } else if (await hash($("pin").value, u.salz || "") !== u.pin) {
+    return $("loginErr").textContent = "Falsches Passwort.";
+  }
+  anmelden(name);
+};
+["pin", "pin2"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") $("loginBtn").click(); }));
+
+function anmelden(name) {
+  user = name;
+  try { localStorage.setItem(KEY + "_name", name); sessionStorage.setItem(KEY + "_sitzung", name); } catch {}
+  ["pin", "pin1", "pin2"].forEach(id => $(id).value = "");
+  const d = new Date(); jahr = d.getFullYear(); monat = d.getMonth();
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("untenBar").classList.remove("hidden");
+  $("hallo").textContent = "Personal-Nr. " + name;
+  zeichnen();
+}
+$("logout").onclick = () => {
+  try { sessionStorage.removeItem(KEY + "_sitzung"); } catch {}
+  user = null;
+  $("app").classList.add("hidden"); $("untenBar").classList.add("hidden"); $("login").classList.remove("hidden");
+  loginModus();
+};
+try { const s = sessionStorage.getItem(KEY + "_sitzung"); if (s && db.users[s]?.pin) anmelden(s); } catch {}
+
+/* --- Hilfsfunktionen --- */
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function iso(j, m, t) { return `${j}-${String(m + 1).padStart(2, "0")}-${String(t).padStart(2, "0")}`; }
+function tageImMonat(j, m) { return new Date(j, m + 1, 0).getDate(); }
+function zahl(x) { return Math.round(x * 100) / 100; }
+function fmt(x) { return zahl(x).toLocaleString("de-CH"); }
+function eintraege() { return db.users[user].eintraege; }
+
+function monatsDaten() {
+  const liste = [];
+  for (let t = 1; t <= tageImMonat(jahr, monat); t++) {
+    const k = iso(jahr, monat, t);
+    for (const e of eintraege()[k] || []) liste.push({ datum: k, tag: t, ...e });
+  }
+  return liste;
+}
+function feiertageImMonat() {
+  const liste = [];
+  for (let t = 1; t <= tageImMonat(jahr, monat); t++) {
+    const k = iso(jahr, monat, t), wt = new Date(jahr, monat, t).getDay();
+    if (feiertag(k) && wt !== 0 && wt !== 6) liste.push(k);
+  }
+  return liste;
+}
+function summen(liste) {
+  const s = Object.fromEntries(TYPEN.map(t => [t.id, { tage: 0, std: 0 }]));
+  const arbeitstage = new Set();
+  for (const e of liste) {
+    s[e.typ].std += e.std || 0;
+    s[e.typ].tage += e.tage || 0;
+    if (e.typ === "arbeit") arbeitstage.add(e.datum);
+  }
+  s.arbeit.tage = arbeitstage.size;
+  return s;
+}
+function beschreibung(e) {
+  if (e.typ === "arbeit") return `${fmt(e.std)} Std.`;
+  if (e.tage === 1) return "Ganzer Tag";
+  if (e.tage === 0.5) return "Halber Tag";
+  return `${fmt(e.std)} Std.`;
+}
+
+/* --- Monatsansicht --- */
+function zeichnen() {
+  $("monatTitel").textContent = `${MONATE[monat]} ${jahr}`;
+  const liste = monatsDaten();
+  const s = summen(liste);
+  const kachel = (wert, text) => `<div><b>${wert}</b><span>${text}</span></div>`;
+  const abw = (id) => s[id].tage ? fmt(s[id].tage) + " T" + (s[id].std ? " + " + fmt(s[id].std) + " h" : "") : (s[id].std ? fmt(s[id].std) + " h" : "–");
+  $("summe").innerHTML =
+    kachel(fmt(s.arbeit.std), "Arbeitsstunden") + kachel(abw("ferien"), "Ferien") + kachel(abw("krank"), "Krankheit") +
+    kachel(abw("unfall"), "Unfall") + kachel(abw("andere"), "Andere") + kachel(feiertageImMonat().length || "–", "Feiertage (Mo–Fr)");
+
+  const heute = new Date(); const heuteIso = iso(heute.getFullYear(), heute.getMonth(), heute.getDate());
+  let html = "";
+  for (let t = 1; t <= tageImMonat(jahr, monat); t++) {
+    const k = iso(jahr, monat, t), wt = new Date(jahr, monat, t).getDay();
+    const es = eintraege()[k] || [];
+    const ft = feiertag(k);
+    const pills = (ft ? `<span class="ft">${ft}</span>` : "") +
+      es.map(e => `<span class="pill" style="background:${TYP[e.typ].farbe}">${TYP[e.typ].label} · ${esc(beschreibung(e))}</span>`).join("");
+    html += `<div class="tag${wt === 0 || wt === 6 || ft ? " we" : ""}${k === heuteIso ? " heute" : ""}" data-k="${k}">
+      <div class="datum"><b>${t}</b><span>${WT[wt]}</span></div>
+      <div class="inhalt">${pills}${es.length ? "" : '<span class="leer">+ eintragen</span>'}</div></div>`;
+  }
+  $("tage").innerHTML = html;
+}
+$("tage").onclick = e => { const el = e.target.closest(".tag"); if (el) oeffnen(el.dataset.k); };
+$("prev").onclick = () => { monat--; if (monat < 0) { monat = 11; jahr--; } zeichnen(); };
+$("next").onclick = () => { monat++; if (monat > 11) { monat = 0; jahr++; } zeichnen(); };
+
+/* --- Tag bearbeiten --- */
+$("typen").innerHTML = TYPEN.map(t => `<button type="button" data-typ="${t.id}">${t.label}</button>`).join("");
+$("typen").onclick = e => { const b = e.target.closest("button"); if (b) typWaehlen(b.dataset.typ); };
+function typWaehlen(id) {
+  aktTyp = id;
+  [...$("typen").children].forEach(b => b.classList.toggle("aktiv", b.dataset.typ === id));
+  $("fArbeit").classList.toggle("hidden", id !== "arbeit");
+  $("fAbwesend").classList.toggle("hidden", id === "arbeit");
+}
+$("umfang").onchange = () => $("fAbwStd").classList.toggle("hidden", $("umfang").value !== "std");
+
+function oeffnen(k) {
+  aktTag = k;
+  const d = new Date(k + "T12:00");
+  $("dlgTitel").textContent = `${WT_LANG[d.getDay()]}, ${d.getDate()}. ${MONATE[d.getMonth()]}` + (feiertag(k) ? ` – ${feiertag(k)}` : "");
+  ["std", "abwStd", "notiz"].forEach(id => $(id).value = "");
+  $("umfang").value = "1"; $("fAbwStd").classList.add("hidden");
+  $("dlgErr").textContent = "";
+  typWaehlen("arbeit");
+  listeZeichnen();
+  $("dlg").showModal();
+}
+function listeZeichnen() {
+  const es = eintraege()[aktTag] || [];
+  $("dlgListe").innerHTML = es.length ? es.map((e, i) => `<div class="eintrag">
+      <span class="pill" style="background:${TYP[e.typ].farbe}">${TYP[e.typ].label}</span>
+      <div>${esc(beschreibung(e))}${e.notiz ? `<small>${esc(e.notiz)}</small>` : ""}</div>
+      <button class="danger" data-i="${i}" aria-label="Löschen">Löschen</button></div>`).join("") : "";
+  $("speichern").textContent = es.length ? "Weiteren Eintrag hinzufügen" : "Eintrag hinzufügen";
+}
+$("dlgListe").onclick = e => {
+  const b = e.target.closest("button[data-i]"); if (!b) return;
+  if (!confirm("Diesen Eintrag löschen?")) return;
+  const es = eintraege()[aktTag]; es.splice(Number(b.dataset.i), 1);
+  if (!es.length) delete eintraege()[aktTag];
+  sichern(); listeZeichnen(); zeichnen();
+};
+$("speichern").onclick = () => {
+  const e = { typ: aktTyp };
+  if (aktTyp === "arbeit") {
+    e.std = zahl(parseFloat($("std").value));
+    if (!(e.std > 0)) return $("dlgErr").textContent = "Bitte die Stunden eingeben.";
+  } else if ($("umfang").value === "std") {
+    e.std = zahl(parseFloat($("abwStd").value));
+    if (!(e.std > 0)) return $("dlgErr").textContent = "Bitte Stunden eingeben.";
+  } else {
+    e.tage = Number($("umfang").value);
+  }
+  const notiz = $("notiz").value.trim(); if (notiz) e.notiz = notiz;
+  (eintraege()[aktTag] ||= []).push(e);
+  sichern(); zeichnen();
+  $("dlg").close();
+};
+$("dlgZu").onclick = () => $("dlg").close();
+$("dlg").addEventListener("click", e => { if (e.target === $("dlg")) $("dlg").close(); });
+
+/* --- Excel erstellen & senden --- */
+async function excelErstellen() {
+  const liste = monatsDaten();
+  const s = summen(liste);
+  const wb = new ExcelJS.Workbook();
+  wb.creator = FIRMA;
+  const titel = `${MONATE[monat]} ${jahr}`;
+  const fett = { bold: true };
+  const kopf = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F766E" } };
+
+  const fuellung = argb => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+  const ftListe = feiertageImMonat();
+
+  // Blatt 1: jeder Tag des Monats mit dem, was eingetragen wurde
+  const d = wb.addWorksheet("Monat");
+  d.columns = [{ width: 11 }, { width: 6 }, { width: 18 }, { width: 10 }, { width: 9 }, { width: 10 },
+    { width: 9 }, { width: 9 }, { width: 11 }, { width: 34 }, { width: 34 }];
+  d.addRow([`${FIRMA} – Stundenrapport ${titel}`]).font = { bold: true, size: 14 };
+  d.addRow(["Personalnummer:", "", user]).font = fett;
+  d.addRow(["Erstellt am:", "", new Date().toLocaleString("de-CH")]);
+  d.addRow([]);
+  const h = d.addRow(["Datum", "Tag", "Feiertag", "Arbeit (Std.)", "Ferien (Tage)", "Krankheit (Tage)",
+    "Unfall (Tage)", "Andere (Tage)", "Abwesend (Std.)", "Eingetragen", "Bemerkung"]);
+  h.height = 30;
+  h.eachCell(c => { c.font = { bold: true, color: { argb: "FFFFFFFF" } }; c.fill = kopf; c.alignment = { wrapText: true, vertical: "middle" }; });
+  const erste = h.number + 1;
+  for (let t = 1; t <= tageImMonat(jahr, monat); t++) {
+    const k = iso(jahr, monat, t), wt = new Date(jahr, monat, t).getDay();
+    const es = eintraege()[k] || [];
+    const sum = (typ, feld) => zahl(es.filter(e => e.typ === typ).reduce((a, e) => a + (e[feld] || 0), 0)) || null;
+    const abwStd = zahl(es.filter(e => e.typ !== "arbeit").reduce((a, e) => a + (e.std || 0), 0)) || null;
+    const r = d.addRow([new Date(Date.UTC(jahr, monat, t)), WT[wt], feiertag(k),
+      sum("arbeit", "std"), sum("ferien", "tage"), sum("krank", "tage"), sum("unfall", "tage"), sum("andere", "tage"), abwStd,
+      es.map(e => `${TYP[e.typ].label}: ${beschreibung(e)}`).join(", "),
+      es.filter(e => e.notiz).map(e => e.notiz).join("; ")]);
+    if (feiertag(k)) r.eachCell({ includeEmpty: true }, c => c.fill = fuellung("FFEFE9FB"));
+    else if (wt === 0 || wt === 6) r.eachCell({ includeEmpty: true }, c => c.fill = fuellung("FFF1F3F2"));
+  }
+  const letzte = d.lastRow.number;
+  const spaltenSumme = col => { let x = 0; for (let r = erste; r <= letzte; r++) x += d.getRow(r).getCell(col).value || 0; return zahl(x); };
+  const total = d.addRow(["Total", "", "", ...["D", "E", "F", "G", "H", "I"].map((c, i) =>
+    ({ formula: `SUM(${c}${erste}:${c}${letzte})`, result: spaltenSumme(i + 4) })), "", ""]);
+  total.font = fett;
+  total.eachCell({ includeEmpty: true }, c => c.border = { top: { style: "medium" } });
+  d.getColumn(1).numFmt = "dd.mm.yyyy";
+  for (let c = 4; c <= 9; c++) d.getColumn(c).numFmt = "0.##";
+  [10, 11].forEach(c => d.getColumn(c).alignment = { wrapText: true, vertical: "top" });
+  d.views = [{ state: "frozen", ySplit: erste - 1 }];
+  d.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+
+  // Blatt 2: Übersicht
+  const u = wb.addWorksheet("Übersicht");
+  u.columns = [{ width: 24 }, { width: 14 }, { width: 14 }];
+  u.addRow([`${FIRMA} – Übersicht ${titel}`]).font = { bold: true, size: 14 };
+  u.addRow(["Personalnummer", user]);
+  u.addRow([]);
+  const uh = u.addRow(["Kategorie", "Tage", "Stunden"]);
+  uh.eachCell(c => { c.font = { bold: true, color: { argb: "FFFFFFFF" } }; c.fill = kopf; });
+  for (const t of TYPEN) u.addRow([t.label, s[t.id].tage || null, s[t.id].std || null]);
+  u.addRow(["Feiertage (Mo–Fr)", ftListe.length || null, null]);
+  [2, 3].forEach(c => u.getColumn(c).numFmt = "0.##");
+
+  const buf = await wb.xlsx.writeBuffer();
+  const dateiname = `Stunden_${jahr}-${String(monat + 1).padStart(2, "0")}_PNr${user}.xlsx`;
+  return { datei: new File([buf], dateiname, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), titel, s };
+}
+
+$("senden").onclick = async () => {
+  if (typeof ExcelJS === "undefined") return alert("Excel-Funktion konnte nicht geladen werden. Bitte Internetverbindung prüfen.");
+  if (!monatsDaten().length && !confirm("Für diesen Monat gibt es noch keine Einträge. Trotzdem senden?")) return;
+  const { datei, titel, s } = await excelErstellen();
+  const text = `Stundenrapport ${titel} – ${user}: ${fmt(s.arbeit.std)} Arbeitsstunden`;
+  if (navigator.canShare && navigator.canShare({ files: [datei] })) {
+    try { await navigator.share({ files: [datei], title: text, text }); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  // Ausweichlösung (z. B. am Computer): herunterladen und Mail öffnen
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(datei); a.download = datei.name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  if (EMPFAENGER) {
+    setTimeout(() => {
+      if (confirm(`Die Datei «${datei.name}» wurde heruntergeladen.\n\nJetzt eine Mail an ${EMPFAENGER} öffnen? (Datei bitte im Mail anhängen)`))
+        location.href = `mailto:${EMPFAENGER}?subject=${encodeURIComponent(text)}`;
+    }, 500);
+  }
+};
+</script>
+</body>
+</html>

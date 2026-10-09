@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Stundenerfassung – Admin</title>
+<link rel="stylesheet" href="stil.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="gemeinsam.js"></script>
+</head>
+<body>
+<main class="breit">
+
+  <section id="login" class="hidden" style="max-width:420px;margin:0 auto">
+    <h1>Admin-Bereich</h1>
+    <form class="card" id="loginForm">
+      <label for="adminPw">Admin-Passwort</label>
+      <input id="adminPw" type="password" autocomplete="current-password" required>
+      <div class="err" id="loginErr"></div>
+      <button class="primary" style="width:100%;margin-top:8px">Anmelden</button>
+    </form>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="top">
+      <h1 class="firmaTitel" style="margin:8px 0">Admin</h1>
+      <button class="link" id="logout">Abmelden</button>
+    </div>
+    <div class="reiter">
+      <button class="aktiv" data-r="rMonat">Monatsübersicht</button>
+      <button data-r="rMa">Mitarbeiterinnen</button>
+    </div>
+
+    <!-- Monatsübersicht -->
+    <div id="rMonat">
+      <div class="monat">
+        <button id="prev" aria-label="Vorheriger Monat">‹</button>
+        <strong id="monatTitel"></strong>
+        <button id="next" aria-label="Nächster Monat">›</button>
+      </div>
+      <div class="card">
+        <div class="top" style="margin-bottom:8px">
+          <h2 style="margin:0">Alle Personalnummern</h2>
+          <button class="primary klein" id="excelAlle">Excel für alle</button>
+        </div>
+        <p class="hinweis" id="ftInfo" style="margin:0 0 8px"></p>
+        <div class="tabelle"><table id="uebersicht"></table></div>
+        <div class="err" id="monatErr"></div>
+      </div>
+      <div class="card hidden" id="details">
+        <div class="top" style="margin-bottom:8px">
+          <h2 style="margin:0" id="detailTitel"></h2>
+          <button class="link" id="detailZu">Schliessen</button>
+        </div>
+        <div class="tabelle"><table id="detailTabelle"></table></div>
+      </div>
+    </div>
+
+    <!-- Mitarbeiterinnen -->
+    <div id="rMa" class="hidden">
+      <form class="card" id="neuForm">
+        <h2>Neue Personalnummer</h2>
+        <div class="row" style="align-items:end">
+          <div><label for="neuNr">Personalnummer</label><input id="neuNr" required maxlength="20" autocapitalize="characters"></div>
+          <div><label for="neuPw">Startpasswort</label><input id="neuPw" required minlength="8"></div>
+          <div style="flex:none"><button class="primary">Anlegen</button></div>
+        </div>
+        <div class="err" id="neuErr"></div>
+      </form>
+      <div class="card hidden" id="weitergeben">
+        <h2 class="ok">Bitte weitergeben</h2>
+        <p style="margin:0 0 8px">Geben Sie diese Angaben der Mitarbeiterin persönlich (nicht per WhatsApp-Gruppe). Beim ersten Anmelden muss sie ein eigenes Passwort wählen.</p>
+        <div class="code" id="weitergebenText"></div>
+        <button class="link" id="weitergebenZu">Erledigt – ausblenden</button>
+      </div>
+      <div class="card">
+        <h2>Alle Personalnummern</h2>
+        <div class="tabelle"><table id="maTabelle"></table></div>
+        <div class="err" id="maErr"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+let FIRMA = "Stundenerfassung";
+let jahr, monat, daten = { mitarbeiter: [], eintraege: [] };
+
+function zeige(id) { for (const s of ["login", "app"]) $(s).classList.toggle("hidden", s !== id); }
+function serverFehler(e, feld) {
+  if (e.status === 401) { zeige("login"); $("loginErr").textContent = e.message; return; }
+  $(feld).textContent = e.message;
+}
+function startpasswort() {
+  const z = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789", b = crypto.getRandomValues(new Uint8Array(12));
+  const s = [...b].map(x => z[x % z.length]).join("");
+  return s.slice(0, 4) + "-" + s.slice(4, 8) + "-" + s.slice(8);
+}
+
+(async () => {
+  try { FIRMA = (await api("info")).firma; } catch {}
+  document.querySelectorAll(".firmaTitel").forEach(h => h.textContent = FIRMA + " – Admin");
+  const d = new Date(); jahr = d.getFullYear(); monat = d.getMonth();
+  try { await api("admin_ich"); starten(); } catch { zeige("login"); }
+})();
+
+$("loginForm").onsubmit = async ev => {
+  ev.preventDefault();
+  $("loginErr").textContent = "";
+  try { await api("admin_login", { pw: $("adminPw").value }); $("adminPw").value = ""; starten(); }
+  catch (e) { $("loginErr").textContent = e.message; }
+};
+$("logout").onclick = async () => { try { await api("admin_logout"); } catch {} zeige("login"); };
+
+function starten() { zeige("app"); monatLaden(); maLaden(); }
+
+document.querySelector(".reiter").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll(".reiter button").forEach(x => x.classList.toggle("aktiv", x === b));
+  ["rMonat", "rMa"].forEach(id => $(id).classList.toggle("hidden", id !== b.dataset.r));
+};
+
+/* --- Monatsübersicht --- */
+function personen() {
+  // alle aktiven + alle, die in diesem Monat etwas eingetragen haben
+  const nrs = new Set(daten.mitarbeiter.filter(m => m.aktiv).map(m => m.nr));
+  daten.eintraege.forEach(e => nrs.add(e.nr));
+  return [...nrs].sort().map(nr => ({ nr, liste: daten.eintraege.filter(e => e.nr === nr) }));
+}
+async function monatLaden() {
+  $("monatTitel").textContent = `${MONATE[monat]} ${jahr}`;
+  $("monatErr").textContent = "";
+  $("details").classList.add("hidden");
+  try { daten = await api("admin_monat", { jahr, monat: monat + 1 }); }
+  catch (e) { daten = { mitarbeiter: [], eintraege: [] }; serverFehler(e, "monatErr"); }
+  const ft = feiertageImMonat(jahr, monat);
+  $("ftInfo").textContent = `Feiertage Mo–Fr in diesem Monat: ${ft.length ? ft.map(k => `${Number(k.slice(8))}. ${feiertag(k)}`).join(", ") : "keine"}`;
+  const p = personen();
+  $("uebersicht").innerHTML = `<tr><th>Personal-Nr.</th><th class="zahl">Arbeit (Std.)</th><th class="zahl">Arbeitstage</th>
+    <th class="zahl">Ferien</th><th class="zahl">Krankheit</th><th class="zahl">Unfall</th><th class="zahl">Andere</th><th></th></tr>` +
+    (p.length ? p.map(({ nr, liste }) => {
+      const s = summen(liste);
+      return `<tr><td><b>${esc(nr)}</b></td><td class="zahl">${fmt(s.arbeit.std)}</td><td class="zahl">${s.arbeit.tage}</td>
+        <td class="zahl">${abwText(s.ferien)}</td><td class="zahl">${abwText(s.krank)}</td><td class="zahl">${abwText(s.unfall)}</td><td class="zahl">${abwText(s.andere)}</td>
+        <td><button class="klein" data-detail="${esc(nr)}">Details</button> <button class="klein" data-excel="${esc(nr)}">Excel</button></td></tr>`;
+    }).join("") : `<tr><td colspan="8" class="hinweis">Noch keine Personalnummern angelegt.</td></tr>`);
+}
+$("prev").onclick = () => { monat--; if (monat < 0) { monat = 11; jahr--; } monatLaden(); };
+$("next").onclick = () => { monat++; if (monat > 11) { monat = 0; jahr++; } monatLaden(); };
+
+$("uebersicht").onclick = async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.detail) details(b.dataset.detail);
+  if (b.dataset.excel) {
+    const wb = new ExcelJS.Workbook(); wb.creator = FIRMA;
+    monatsBlatt(wb, "Monat", FIRMA, b.dataset.excel, jahr, monat, daten.eintraege.filter(x => x.nr === b.dataset.excel));
+    herunterladen(await alsDatei(wb, excelDateiname(jahr, monat, "PNr" + b.dataset.excel)));
+  }
+};
+$("excelAlle").onclick = async () => {
+  if (typeof ExcelJS === "undefined") return alert("Excel-Funktion konnte nicht geladen werden.");
+  const wb = new ExcelJS.Workbook(); wb.creator = FIRMA;
+  const p = personen();
+  uebersichtsBlatt(wb, FIRMA, jahr, monat, p);
+  for (const { nr, liste } of p) monatsBlatt(wb, ("PNr " + nr).slice(0, 31), FIRMA, nr, jahr, monat, liste);
+  herunterladen(await alsDatei(wb, excelDateiname(jahr, monat, "alle")));
+};
+
+function details(nr) {
+  const liste = daten.eintraege.filter(e => e.nr === nr);
+  $("detailTitel").textContent = `Personal-Nr. ${nr} – ${MONATE[monat]} ${jahr}`;
+  let html = `<tr><th>Datum</th><th>Tag</th><th>Feiertag</th><th>Eingetragen</th><th>Bemerkung</th></tr>`;
+  for (let t = 1; t <= tageImMonat(jahr, monat); t++) {
+    const k = iso(jahr, monat, t), wt = new Date(jahr, monat, t).getDay();
+    const es = liste.filter(e => e.datum === k);
+    const pills = es.map(e => `<span class="pill" style="background:${TYP[e.typ].farbe}">${TYP[e.typ].label} · ${esc(beschreibung(e))}</span>`).join(" ");
+    html += `<tr style="${wt === 0 || wt === 6 || feiertag(k) ? "opacity:.6" : ""}"><td>${t}.${monat + 1}.</td><td>${WT[wt]}</td>
+      <td>${feiertag(k) ? `<span class="ft">${feiertag(k)}</span>` : ""}</td><td>${pills}</td>
+      <td style="white-space:normal">${esc(es.filter(e => e.notiz).map(e => e.notiz).join("; "))}</td></tr>`;
+  }
+  $("detailTabelle").innerHTML = html;
+  $("details").classList.remove("hidden");
+  $("details").scrollIntoView({ behavior: "smooth" });
+}
+$("detailZu").onclick = () => $("details").classList.add("hidden");
+
+/* --- Mitarbeiterinnen verwalten --- */
+$("neuPw").value = startpasswort();
+async function maLaden() {
+  $("maErr").textContent = "";
+  try {
+    const { mitarbeiter } = await api("ma_liste");
+    $("maTabelle").innerHTML = `<tr><th>Personal-Nr.</th><th>Status</th><th>Angelegt</th><th></th></tr>` +
+      (mitarbeiter.length ? mitarbeiter.map(m => `<tr class="${m.aktiv ? "" : "inaktiv"}"><td><b>${esc(m.nr)}</b></td>
+        <td>${!m.aktiv ? "deaktiviert" : m.mussAendern ? "wartet auf erste Anmeldung" : "aktiv"}</td>
+        <td>${esc(String(m.erstellt).slice(0, 10))}</td>
+        <td><button class="klein" data-pw="${esc(m.nr)}">Neues Startpasswort</button>
+            <button class="klein" data-aktiv="${esc(m.nr)}" data-wert="${m.aktiv ? 0 : 1}">${m.aktiv ? "Deaktivieren" : "Aktivieren"}</button></td></tr>`).join("")
+        : `<tr><td colspan="4" class="hinweis">Noch keine Personalnummern angelegt.</td></tr>`);
+  } catch (e) { serverFehler(e, "maErr"); }
+}
+function weitergeben(nr, pw) {
+  $("weitergebenText").textContent = `Adresse: ${location.origin}${location.pathname.replace(/admin\.html$/, "")}\nPersonalnummer: ${nr}\nStartpasswort: ${pw}`;
+  $("weitergebenText").style.whiteSpace = "pre-line";
+  $("weitergeben").classList.remove("hidden");
+}
+$("weitergebenZu").onclick = () => $("weitergeben").classList.add("hidden");
+
+$("neuForm").onsubmit = async ev => {
+  ev.preventDefault();
+  $("neuErr").textContent = "";
+  const nr = $("neuNr").value.trim().toUpperCase(), pw = $("neuPw").value;
+  try {
+    await api("ma_anlegen", { nr, startpw: pw });
+    weitergeben(nr, pw);
+    $("neuNr").value = ""; $("neuPw").value = startpasswort();
+    maLaden(); monatLaden();
+  } catch (e) { serverFehler(e, "neuErr"); }
+};
+$("maTabelle").onclick = async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  try {
+    if (b.dataset.pw) {
+      if (!confirm(`Neues Startpasswort für ${b.dataset.pw} erstellen? Das bisherige Passwort ist danach ungültig.`)) return;
+      const pw = startpasswort();
+      await api("ma_startpw", { nr: b.dataset.pw, startpw: pw });
+      weitergeben(b.dataset.pw, pw);
+    } else if (b.dataset.aktiv) {
+      const an = b.dataset.wert === "1";
+      if (!an && !confirm(`${b.dataset.aktiv} deaktivieren? Sie kann sich dann nicht mehr anmelden. Die Einträge bleiben erhalten.`)) return;
+      await api("ma_aktiv", { nr: b.dataset.aktiv, aktiv: an });
+    }
+    maLaden(); monatLaden();
+  } catch (err) { serverFehler(err, "maErr"); }
+};
+</script>
+</body>
+</html>

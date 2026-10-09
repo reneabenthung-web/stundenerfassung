@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<meta name="robots" content="noindex">
+<title>Stundenerfassung</title>
+<link rel="stylesheet" href="stil.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="gemeinsam.js"></script>
+</head>
+<body>
+<main>
+
+  <!-- Anmeldung -->
+  <section id="login" class="hidden">
+    <h1 class="firmaTitel">Stundenerfassung</h1>
+    <form class="card" id="loginForm">
+      <label for="loginNr">Personalnummer</label>
+      <input id="loginNr" inputmode="numeric" autocomplete="username" autocapitalize="characters" placeholder="z. B. 1001" required>
+      <label for="loginPw">Passwort</label>
+      <input id="loginPw" type="password" autocomplete="current-password" required>
+      <div class="err" id="loginErr"></div>
+      <button class="primary" style="width:100%;margin-top:8px">Anmelden</button>
+      <p class="hinweis">Passwort vergessen? Bitte im Büro melden – Sie erhalten ein neues Startpasswort.</p>
+    </form>
+  </section>
+
+  <!-- Eigenes Passwort festlegen -->
+  <section id="pwNeu" class="hidden">
+    <h1>Eigenes Passwort festlegen</h1>
+    <form class="card" id="pwForm">
+      <p class="hinweis" id="pwText" style="margin-top:0"></p>
+      <div id="pwAltBox" class="hidden">
+        <label for="pwAlt">Bisheriges Passwort</label>
+        <input id="pwAlt" type="password" autocomplete="current-password">
+      </div>
+      <label for="pw1">Neues Passwort</label>
+      <input id="pw1" type="password" autocomplete="new-password" required>
+      <label for="pw2">Passwort wiederholen</label>
+      <input id="pw2" type="password" autocomplete="new-password" required>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="zeigen" style="width:auto"> Passwort anzeigen</label>
+      <div class="err" id="pwErr"></div>
+      <button class="primary" style="width:100%;margin-top:8px">Passwort speichern</button>
+      <button type="button" class="link hidden" id="pwAbbrechen" style="width:100%">Abbrechen</button>
+    </form>
+  </section>
+
+  <!-- Monatsansicht -->
+  <section id="app" class="hidden">
+    <div class="top">
+      <h1 id="hallo" style="margin:8px 0"></h1>
+      <div class="aktionen">
+        <button class="link" id="pwWechseln">Passwort</button>
+        <button class="link" id="logout">Abmelden</button>
+      </div>
+    </div>
+    <div class="monat">
+      <button id="prev" aria-label="Vorheriger Monat">‹</button>
+      <strong id="monatTitel"></strong>
+      <button id="next" aria-label="Nächster Monat">›</button>
+    </div>
+    <div class="card summe" id="summe"></div>
+    <div class="err" id="appErr"></div>
+    <div id="tage"></div>
+  </section>
+</main>
+
+<div class="unten hidden" id="untenBar">
+  <button id="excel">Meinen Monatsrapport als Excel</button>
+</div>
+
+<!-- Tag bearbeiten -->
+<dialog id="dlg">
+  <div class="kopf">
+    <strong id="dlgTitel"></strong>
+    <button class="link" id="dlgZu" aria-label="Schliessen">✕</button>
+  </div>
+  <div class="body">
+    <div id="dlgListe"></div>
+    <label>Art</label>
+    <div class="typen" id="typen"></div>
+
+    <div id="fArbeit">
+      <label for="std">Gearbeitete Stunden</label>
+      <input id="std" type="number" inputmode="decimal" min="0" max="24" step="0.25" placeholder="z. B. 3.5">
+    </div>
+
+    <div id="fAbwesend" class="hidden">
+      <label for="umfang">Umfang</label>
+      <select id="umfang">
+        <option value="1">Ganzer Tag</option>
+        <option value="0.5">Halber Tag</option>
+        <option value="std">Stunden</option>
+      </select>
+      <div id="fAbwStd" class="hidden">
+        <label for="abwStd">Stunden</label>
+        <input id="abwStd" type="number" inputmode="decimal" min="0" max="24" step="0.25">
+      </div>
+    </div>
+
+    <label for="notiz">Bemerkung (optional)</label>
+    <textarea id="notiz" maxlength="500"></textarea>
+    <div class="err" id="dlgErr"></div>
+    <button class="primary" id="speichern" style="width:100%;margin-top:8px">Eintrag hinzufügen</button>
+  </div>
+</dialog>
+
+<script>
+let FIRMA = "Stundenerfassung", MIN_LAENGE = 12;
+let ich = null;                 // angemeldete Personalnummer
+let jahr, monat;                // monat: 0–11
+let liste = [];                 // Einträge des angezeigten Monats
+let aktTag = null, aktTyp = "arbeit";
+
+function zeige(id) {
+  for (const s of ["login", "pwNeu", "app"]) $(s).classList.toggle("hidden", s !== id);
+  $("untenBar").classList.toggle("hidden", id !== "app");
+}
+// Bei abgelaufener Sitzung zurück zur Anmeldung
+function serverFehler(e, feld) {
+  if (e.status === 401) { ich = null; zeige("login"); $("loginErr").textContent = e.message; return; }
+  if (e.status === 403) { pwSeite(true); return; }
+  $(feld).textContent = e.message;
+}
+
+/* --- Start --- */
+(async () => {
+  try { const i = await api("info"); FIRMA = i.firma; MIN_LAENGE = i.minLaenge; } catch {}
+  document.querySelectorAll(".firmaTitel").forEach(h => h.textContent = FIRMA + " – Stundenerfassung");
+  document.title = FIRMA + " – Stundenerfassung";
+  try { const l = localStorage.getItem("stunden_nr"); if (l) $("loginNr").value = l; } catch {}
+  try {
+    const r = await api("ich");
+    r.mussAendern ? (ich = r.nr, pwSeite(true)) : starten(r.nr);
+  } catch { zeige("login"); }
+})();
+
+/* --- Anmeldung --- */
+$("loginForm").onsubmit = async ev => {
+  ev.preventDefault();
+  $("loginErr").textContent = "";
+  try {
+    const r = await api("login", { nr: $("loginNr").value, pw: $("loginPw").value });
+    $("loginPw").value = "";
+    try { localStorage.setItem("stunden_nr", r.nr); } catch {}
+    ich = r.nr;
+    r.mussAendern ? pwSeite(true) : starten(r.nr);
+  } catch (e) { $("loginErr").textContent = e.message; }
+};
+
+function pwSeite(erstesMal) {
+  zeige("pwNeu");
+  $("pwText").textContent = erstesMal
+    ? `Willkommen! Bitte wählen Sie jetzt Ihr eigenes Passwort mit mindestens ${MIN_LAENGE} Zeichen. Das Startpasswort ist danach nicht mehr gültig.`
+    : `Neues Passwort mit mindestens ${MIN_LAENGE} Zeichen.`;
+  $("pwAltBox").classList.toggle("hidden", erstesMal);
+  $("pwAbbrechen").classList.toggle("hidden", erstesMal);
+  ["pwAlt", "pw1", "pw2"].forEach(id => $(id).value = "");
+  $("pwErr").textContent = "";
+}
+$("zeigen").onchange = e => ["pw1", "pw2"].forEach(id => $(id).type = e.target.checked ? "text" : "password");
+$("pwAbbrechen").onclick = () => zeige("app");
+$("pwWechseln").onclick = () => pwSeite(false);
+$("pwForm").onsubmit = async ev => {
+  ev.preventDefault();
+  const p1 = $("pw1").value;
+  if ([...p1].length < MIN_LAENGE) return $("pwErr").textContent = `Das Passwort muss mindestens ${MIN_LAENGE} Zeichen haben (jetzt ${[...p1].length}).`;
+  if (p1 !== $("pw2").value) return $("pwErr").textContent = "Die Passwörter stimmen nicht überein.";
+  try {
+    await api("pw_aendern", { alt: $("pwAlt").value, neu: p1 });
+    ["pwAlt", "pw1", "pw2"].forEach(id => $(id).value = "");
+    starten(ich);
+  } catch (e) { serverFehler(e, "pwErr"); }
+};
+
+async function starten(nr) {
+  ich = nr;
+  if (jahr === undefined) { const d = new Date(); jahr = d.getFullYear(); monat = d.getMonth(); }
+  $("hallo").textContent = "Nr. " + nr;
+  zeige("app");
+  await laden();
+}
+$("logout").onclick = async () => {
+  try { await api("logout"); } catch {}
+  ich = null; liste = [];
+  zeige("login");
+};
+
+/* --- Monatsansicht --- */
+async function laden() {
+  $("appErr").textContent = "";
+  $("monatTitel").textContent = `${MONATE[monat]} ${jahr}`;
+  try { liste = (await api("monat", { jahr, monat: monat + 1 })).eintraege; }
+  catch (e) { liste = []; serverFehler(e, "appErr"); }
+  zeichnen();
+}
+function zeichnen() {
+  const s = summen(liste);
+  const kachel = (wert, text) => `<div><b>${wert}</b><span>${text}</span></div>`;
+  $("summe").innerHTML =
+    kachel(fmt(s.arbeit.std), "Arbeitsstunden") + kachel(abwText(s.ferien), "Ferien") + kachel(abwText(s.krank), "Krankheit") +
+    kachel(abwText(s.unfall), "Unfall") + kachel(abwText(s.andere), "Andere") + kachel(feiertageImMonat(jahr, monat).length || "–", "Feiertage (Mo–Fr)");
+
+  const heute = new Date(); const heuteIso = iso(heute.getFullYear(), heute.getMonth(), heute.getDate());
+  let html = "";
+  for (let t = 1; t <= tageImMonat(jahr, monat); t++) {
+    const k = iso(jahr, monat, t), wt = new Date(jahr, monat, t).getDay();
+    const es = liste.filter(e => e.datum === k);
+    const ft = feiertag(k);
+    const pills = (ft ? `<span class="ft">${ft}</span>` : "") +
+      es.map(e => `<span class="pill" style="background:${TYP[e.typ].farbe}">${TYP[e.typ].label} · ${esc(beschreibung(e))}</span>`).join("");
+    html += `<div class="tag${wt === 0 || wt === 6 || ft ? " we" : ""}${k === heuteIso ? " heute" : ""}" data-k="${k}">
+      <div class="datum"><b>${t}</b><span>${WT[wt]}</span></div>
+      <div class="inhalt">${pills}${es.length ? "" : '<span class="leer">+ eintragen</span>'}</div></div>`;
+  }
+  $("tage").innerHTML = html;
+}
+$("tage").onclick = e => { const el = e.target.closest(".tag"); if (el) oeffnen(el.dataset.k); };
+$("prev").onclick = () => { monat--; if (monat < 0) { monat = 11; jahr--; } laden(); };
+$("next").onclick = () => { monat++; if (monat > 11) { monat = 0; jahr++; } laden(); };
+
+/* --- Tag bearbeiten --- */
+$("typen").innerHTML = TYPEN.map(t => `<button type="button" data-typ="${t.id}">${t.label}</button>`).join("");
+$("typen").onclick = e => { const b = e.target.closest("button"); if (b) typWaehlen(b.dataset.typ); };
+function typWaehlen(id) {
+  aktTyp = id;
+  [...$("typen").children].forEach(b => b.classList.toggle("aktiv", b.dataset.typ === id));
+  $("fArbeit").classList.toggle("hidden", id !== "arbeit");
+  $("fAbwesend").classList.toggle("hidden", id === "arbeit");
+}
+$("umfang").onchange = () => $("fAbwStd").classList.toggle("hidden", $("umfang").value !== "std");
+
+function oeffnen(k) {
+  aktTag = k;
+  const d = new Date(k + "T12:00");
+  $("dlgTitel").textContent = `${WT_LANG[d.getDay()]}, ${d.getDate()}. ${MONATE[d.getMonth()]}` + (feiertag(k) ? ` – ${feiertag(k)}` : "");
+  ["std", "abwStd", "notiz"].forEach(id => $(id).value = "");
+  $("umfang").value = "1"; $("fAbwStd").classList.add("hidden");
+  $("dlgErr").textContent = "";
+  typWaehlen("arbeit");
+  listeZeichnen();
+  $("dlg").showModal();
+}
+function listeZeichnen() {
+  const es = liste.filter(e => e.datum === aktTag);
+  $("dlgListe").innerHTML = es.map(e => `<div class="eintrag">
+      <span class="pill" style="background:${TYP[e.typ].farbe}">${TYP[e.typ].label}</span>
+      <div>${esc(beschreibung(e))}${e.notiz ? `<small>${esc(e.notiz)}</small>` : ""}</div>
+      <button class="danger" data-id="${e.id}">Löschen</button></div>`).join("");
+  $("speichern").textContent = es.length ? "Weiteren Eintrag hinzufügen" : "Eintrag hinzufügen";
+}
+$("dlgListe").onclick = async e => {
+  const b = e.target.closest("button[data-id]"); if (!b) return;
+  if (!confirm("Diesen Eintrag löschen?")) return;
+  b.disabled = true;
+  try {
+    await api("eintrag_loeschen", { id: Number(b.dataset.id) });
+    liste = liste.filter(x => x.id !== Number(b.dataset.id));
+    listeZeichnen(); zeichnen();
+  } catch (err) { b.disabled = false; serverFehler(err, "dlgErr"); }
+};
+$("speichern").onclick = async () => {
+  const e = { datum: aktTag, typ: aktTyp };
+  if (aktTyp === "arbeit") {
+    e.std = zahl(parseFloat($("std").value));
+    if (!(e.std > 0 && e.std <= 24)) return $("dlgErr").textContent = "Bitte die Stunden eingeben (0–24).";
+  } else if ($("umfang").value === "std") {
+    e.std = zahl(parseFloat($("abwStd").value));
+    if (!(e.std > 0 && e.std <= 24)) return $("dlgErr").textContent = "Bitte die Stunden eingeben (0–24).";
+  } else {
+    e.tage = Number($("umfang").value);
+  }
+  const notiz = $("notiz").value.trim(); if (notiz) e.notiz = notiz;
+  $("speichern").disabled = true;
+  try {
+    const r = await api("eintrag_neu", e);
+    liste.push({ id: r.id, std: null, tage: null, notiz: null, ...e });
+    zeichnen();
+    $("dlg").close();
+  } catch (err) { serverFehler(err, "dlgErr"); }
+  finally { $("speichern").disabled = false; }
+};
+$("dlgZu").onclick = () => $("dlg").close();
+$("dlg").addEventListener("click", e => { if (e.target === $("dlg")) $("dlg").close(); });
+
+/* --- Eigener Monatsrapport --- */
+$("excel").onclick = async () => {
+  if (typeof ExcelJS === "undefined") return alert("Excel-Funktion konnte nicht geladen werden. Bitte Internetverbindung prüfen.");
+  const wb = new ExcelJS.Workbook(); wb.creator = FIRMA;
+  monatsBlatt(wb, "Monat", FIRMA, ich, jahr, monat, liste);
+  const datei = await alsDatei(wb, excelDateiname(jahr, monat, "PNr" + ich));
+  if (navigator.canShare && navigator.canShare({ files: [datei] })) {
+    try { await navigator.share({ files: [datei], title: datei.name }); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  herunterladen(datei);
+};
+</script>
+</body>
+</html>

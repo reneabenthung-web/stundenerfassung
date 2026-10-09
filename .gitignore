@@ -1,1 +1,4 @@
 ADMIN-CODE.txt
+ADMIN-PASSWORT.txt
+server/daten/*.sqlite*
+server/config.php
